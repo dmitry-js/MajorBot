@@ -236,6 +236,15 @@ class Tapper:
     
     #@error_handler
     async def run(self) -> None:
+        GREEN = "\033[92m"  # ANSI escape code for green text
+        RESET = "\033[0m"   # ANSI escape code to reset text color
+
+        # Log the proxy being used with the session name
+        if self.proxy:
+            logger.info(f"{GREEN}{self.session_name} | Using proxy: {GREEN}{self.proxy}{RESET}")
+        else:
+            logger.info(f"{self.session_name} | Using proxy: No proxy")
+
         if settings.USE_RANDOM_DELAY_IN_RUN:
                 random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
                 logger.info(f"{self.session_name} | Bot will start in <y>{random_delay}s</y>")
@@ -368,9 +377,23 @@ class Tapper:
             await asyncio.sleep(delay=sleep_time)    
             
         
-            
+async def is_proxy_working(proxy: str) -> bool:
+    try:
+        connector = ProxyConnector().from_url(proxy)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get('http://httpbin.org/ip', timeout=5) as response:
+                return response.status == 200
+    except Exception as e:
+        logger.error(f"Proxy check failed: {proxy} | Error: {e}")
+        return False
 
 async def run_tapper(tg_client: Client, proxy: str | None):
+    if proxy:
+        # Check if the proxy is working
+        if not await is_proxy_working(proxy):
+            logger.error(f"{tg_client.name} | Proxy is not working: {proxy}. Skipping this session.")
+            return  # Skip starting this session if the proxy is not working
+
     try:
         await Tapper(tg_client=tg_client, proxy=proxy).run()
     except InvalidSession:
