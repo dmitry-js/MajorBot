@@ -39,13 +39,20 @@ def get_session_names() -> list[str]:
     return session_names
 
 
-def get_proxies() -> list[Proxy]:
+def get_proxies() -> dict[str, Proxy]:
+    proxies = {}
     if settings.USE_PROXY_FROM_FILE:
         with open(file="bot/config/proxies.txt", encoding="utf-8-sig") as file:
-            proxies = [Proxy.from_str(proxy=row.strip()).as_url for row in file]
-    else:
-        proxies = []
-
+            session_name = None
+            for row in file:
+                row = row.strip()
+                if row:  # This checks if the line is not empty
+                    if session_name is None:
+                        session_name = row
+                    else:
+                        proxy = Proxy.from_str(proxy=row).as_url
+                        proxies[session_name] = proxy
+                        session_name = None
     return proxies
 
 
@@ -109,15 +116,13 @@ async def process() -> None:
 
 async def run_tasks(tg_clients: list[Client]):
     proxies = get_proxies()
-    proxies_cycle = cycle(proxies) if proxies else None
     tasks = [
         asyncio.create_task(
             run_tapper(
                 tg_client=tg_client,
-                proxy=next(proxies_cycle) if proxies_cycle else None,
+                proxy=proxies.get(tg_client.name),  # Get proxy by session name
             )
         )
         for tg_client in tg_clients
     ]
-
     await asyncio.gather(*tasks)
