@@ -236,8 +236,14 @@ class Tapper:
     
     #@error_handler
     async def run(self) -> None:
+        GREEN = "\033[92m"  # ANSI escape code for green text
+        RESET = "\033[0m"   # ANSI escape code to reset text color
+
         # Log the proxy being used with the session name
-        logger.info(f"{self.session_name} | Using proxy: {self.proxy if self.proxy else 'No proxy'}")
+        if self.proxy:
+            logger.info(f"{GREEN}{self.session_name} | Using proxy: {GREEN}{self.proxy}{RESET}")
+        else:
+            logger.info(f"{self.session_name} | Using proxy: No proxy")
 
         if settings.USE_RANDOM_DELAY_IN_RUN:
                 random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
