@@ -9,11 +9,13 @@ from pyrogram import Client
 from pyrogram.errors import Unauthorized, UserDeactivated, AuthKeyUnregistered, FloodWait
 from pyrogram.raw.functions.messages import RequestAppWebView
 from pyrogram.raw.functions import account
+import time
 import json
 from pyrogram.raw.types import InputBotAppShortName, InputNotifyPeer, InputPeerNotifySettings
 from .agents import generate_random_user_agent
 from bot.config import settings
-from typing import Any, Callable
+from pyrogram.errors import UsernameNotOccupied
+from typing import Callable
 import functools
 from bot.utils import logger
 from bot.exceptions import InvalidSession
@@ -36,7 +38,7 @@ class Tapper:
         self.proxy = proxy
         self.tg_web_data = None
         self.tg_client_id = 0
-
+        
     async def get_tg_web_data(self) -> str:
         
         if self.proxy:
@@ -94,55 +96,61 @@ class Tapper:
             return ref_id, tg_web_data
 
         except InvalidSession as error:
-            raise error
+            logger.error(f"{self.session_name} | Invalid session")
+            await asyncio.sleep(delay=3)
+            return None, None
 
         except Exception as error:
             logger.error(f"{self.session_name} | Unknown error: {error}")
             await asyncio.sleep(delay=3)
+            return None, None
         
         
+    @error_handler
     async def join_and_mute_tg_channel(self, link: str):
-        link = link if 'https://t.me/+' in link else link[13:]
+        await asyncio.sleep(delay=random.randint(15, 30))
+        
         if not self.tg_client.is_connected:
-            try:
-                await self.tg_client.connect()
-            except Exception as error:
-                logger.error(f"{self.session_name} | (Task) Connect failed: {error}")
+            await self.tg_client.connect()
+            
+        parsed_link = link if 'https://t.me/+' in link else link[13:]
         try:
-            chat = await self.tg_client.get_chat(link)
-            chat_username = chat.username if chat.username else link
-            chat_id = chat.id
             try:
-                await self.tg_client.get_chat_member(chat.username, "me")
-            except Exception as error:
-                if error.ID == 'USER_NOT_PARTICIPANT':
-                    await asyncio.sleep(delay=3)
-                    response = await self.tg_client.join_chat(link)
-                    logger.info(f"{self.session_name} | Joined to channel: <y>{response.username}</y>")
-                    
-                    try:
-                        peer = await self.tg_client.resolve_peer(chat_id)
-                        await self.tg_client.invoke(account.UpdateNotifySettings(
-                            peer=InputNotifyPeer(peer=peer),
-                            settings=InputPeerNotifySettings(mute_until=2147483647)
-                        ))
-                        logger.info(f"{self.session_name} | Successfully muted chat <y>{chat_username}</y>")
-                    except Exception as e:
-                        logger.info(f"{self.session_name} | (Task) Failed to mute chat <y>{chat_username}</y>: {str(e)}")
-                    
-                    
+                chat = await self.tg_client.join_chat(parsed_link)
+                logger.info(f"{self.session_name} | Successfully joined chat <y>{chat.title}</y>")
+            except Exception as join_error:
+                if "USER_ALREADY_PARTICIPANT" in str(join_error):
+                    logger.info(f"{self.session_name} | Already a member of the chat: {link}")
+                    chat = await self.tg_client.get_chat(parsed_link)
                 else:
-                    logger.error(f"{self.session_name} | (Task) Error while checking TG group: <y>{chat_username}</y>")
+                    
+                    raise join_error
 
+            chat_id = chat.id
+            chat_title = getattr(chat, 'title', link)
+
+            await asyncio.sleep(random.randint(5, 10))
+
+            peer = await self.tg_client.resolve_peer(chat_id)
+            await self.tg_client.invoke(account.UpdateNotifySettings(
+                peer=InputNotifyPeer(peer=peer),
+                settings=InputPeerNotifySettings(mute_until=2147483647)
+            ))
+            logger.info(f"{self.session_name} | Successfully muted chat <y>{chat_title}</y>")
+
+        except Exception as e:
+            logger.error(f"{self.session_name} | Error joining/muting channel {link}: {str(e)}")
+
+        finally:
             if self.tg_client.is_connected:
                 await self.tg_client.disconnect()
-        except Exception as error:
-            logger.error(f"{self.session_name} | (Task) Error while join tg channel: {error}")
+
+        await asyncio.sleep(random.randint(10, 20))
 
     
     @error_handler
     async def make_request(self, http_client, method, endpoint=None, url=None, **kwargs):
-        full_url = url or f"https://major.glados.app/api{endpoint or ''}"
+        full_url = url or f"https://major.bot/api{endpoint or ''}"
         response = await http_client.request(method, full_url, **kwargs)
         response.raise_for_status()
         return await response.json()
@@ -227,6 +235,23 @@ class Tapper:
     @error_handler
     async def get_squad(self, http_client, squad_id):
         return await self.make_request(http_client, 'GET', endpoint=f"/squads/{squad_id}?")
+    
+    @error_handler
+    async def puvel_puzzle(self, http_client):
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://raw.githubusercontent.com/GravelFire/TWFqb3JCb3RQdXp6bGVEdXJvdg/master/answer.py") as response:
+                status = response.status
+                if status == 200:
+                    response_answer = json.loads(await response.text())
+                    if response_answer.get('expires', 0) > int(time.time()):
+                        answer = response_answer.get('answer')
+                        start = await self.make_request(http_client, 'GET', endpoint="/durov/")
+                        if start and start.get('success', False):
+                            logger.info(f"{self.session_name} | Start game <y>Puzzle</y>")
+                            await asyncio.sleep(3)
+                            return await self.make_request(http_client, 'POST', endpoint="/durov/", json=answer)
+        return None
 
     @error_handler
     async def check_proxy(self, http_client: aiohttp.ClientSession) -> None:
@@ -260,6 +285,7 @@ class Tapper:
             if proxy_conn:
                 if not proxy_conn.closed:
                     proxy_conn.close()
+            return
                     
         if self.proxy:
             await self.check_proxy(http_client=http_client)
@@ -313,21 +339,27 @@ class Tapper:
                 hold_coins = await self.claim_hold_coins(http_client=http_client)
                 if hold_coins:
                     await asyncio.sleep(1)
-                    logger.info(f"{self.session_name} | Reward HoldCoins: <y>{hold_coins}</y>")
+                    logger.info(f"{self.session_name} | Reward HoldCoins: <y>+{hold_coins}⭐</y>")
                 await asyncio.sleep(10)
                 
                 
                 swipe_coins = await self.claim_swipe_coins(http_client=http_client)
                 if swipe_coins:
                     await asyncio.sleep(1)
-                    logger.info(f"{self.session_name} | Reward SwipeCoins: <y>{swipe_coins}</y>")
+                    logger.info(f"{self.session_name} | Reward SwipeCoins: <y>+{swipe_coins}⭐</y>")
                 await asyncio.sleep(10)
                 
                 
                 roulette = await self.claim_roulette(http_client=http_client)
                 if roulette:
                     await asyncio.sleep(1)
-                    logger.info(f"{self.session_name} | Reward Roulette : <y>{roulette}</y>")
+                    logger.info(f"{self.session_name} | Reward Roulette : <y>+{roulette}⭐</y>")
+                await asyncio.sleep(10)
+                
+                puzzle = await self.puvel_puzzle(http_client=http_client)
+                if puzzle:
+                    await asyncio.sleep(1)
+                    logger.info(f"{self.session_name} | Reward Puzzle Pavel: <y>+5000⭐</y>")
                 await asyncio.sleep(10)
                 
                 
@@ -363,9 +395,6 @@ class Tapper:
                 if proxy_conn:
                     if not proxy_conn.closed:
                         proxy_conn.close()
-            
-            except InvalidSession as error:
-                raise error
 
             except Exception as error:
                 logger.error(f"{self.session_name} | Unknown error: {error}")
